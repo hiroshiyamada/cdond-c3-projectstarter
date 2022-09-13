@@ -1,0 +1,17 @@
+---
+- name: "Extract Artifacts"
+  become: yes
+  become_user: root
+  unarchive:
+    src: ../../artifact.tar.gz
+    dest: /home
+    remote_src: no
+
+- name: "Start App"
+  become: yes
+  become_user: root
+  shell: |
+    cd /home
+    npm install
+    pm2 stop default
+    pm2 start npm -- start

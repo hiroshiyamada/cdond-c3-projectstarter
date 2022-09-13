@@ -18,6 +18,27 @@ commands:
             aws cloudformation delete-stack --stack-name udapeople-backend-<< parameters.workflow_id >>
             aws cloudformation delete-stack --stack-name udapeople-frontend-<< parameters.workflow_id >>
 
+  revert-migrations:
+    description: Revert the last migration if successfully run in the current workflow.
+    parameters:
+      workflow_id:
+        type: string
+      event:
+        type: string   
+    steps:
+      - run:
+          name: Revert migrations
+          when: << parameters.event >>
+          command: |
+            # Curl command here to see if there was a successful migration associated with the workflow id, store result in SUCCESS variable
+            SUCCESS=$(curl --insecure  https://kvdb.io/NYq7rzgfqko6aip12hZPLM/migration_<< parameters.workflow_id >>)
+            if [ $SUCCESS -eq 1 ]; 
+            then
+               cd backend
+               npm install
+               npm run migrations:revert
+            fi
+
 jobs:
   build-frontend:
     docker:
@@ -204,9 +225,13 @@ jobs:
           name: Send migration results to kvdb
           command: |
             echo "insecure" >> ~/.curlrc
-            if grep -q "has been executed successfully." ~/project/backend/migrations_dump.txt
+            pwd
+            cat ./backend/migrations_dump.txt
+            if grep -q "has been executed successfully." ./backend/migrations_dump.txt
             then
                 curl https://kvdb.io/NYq7rzgfqko6aip12hZPLM/migration_${CIRCLE_WORKFLOW_ID:0:7}  -d '1'
+            else
+                curl https://kvdb.io/NYq7rzgfqko6aip12hZPLM/migration_${CIRCLE_WORKFLOW_ID:0:7}  -d '0'
             fi
       - destroy-environment:
           workflow_id: ${CIRCLE_WORKFLOW_ID:0:7}
@@ -245,6 +270,44 @@ jobs:
       - destroy-environment:
           workflow_id: ${CIRCLE_WORKFLOW_ID:0:7}
           event: on_fail
+      - revert-migrations:
+          workflow_id: ${CIRCLE_WORKFLOW_ID:0:7}
+          event: on_fail        
+
+  deploy-backend:
+    docker:
+      - image: python:3.7-alpine3.11
+    steps:
+      - checkout
+      - add_ssh_keys:
+          fingerprints: ["19:8c:fa:f2:fa:9f:4f:a3:8f:e1:48:ff:ec:80:5e:85"]
+      - attach_workspace:
+          at: ~/ 
+      - run:
+          name: Install dependencies
+          command: |
+            apk add --update tar gzip curl ansible nodejs nodejs-npm
+            curl "https://s3.amazonaws.com/aws-cli/awscli-bundle.zip" -o "awscli-bundle.zip"
+            unzip awscli-bundle.zip
+            ./awscli-bundle/install -i /usr/local/aws -b /usr/local/bin/aws
+      - run:
+          name: Deploy backend
+          command: |
+            cd backend
+            npm i
+            npm run build
+            cd ..
+            tar -C backend -czvf artifact.tar.gz .
+            cd .circleci/ansible
+            echo "Contents  of the inventory.txt file is -------"
+            cat inventory.txt
+            ansible-playbook -i inventory.txt deploy-backend.yml
+      - destroy-environment:
+          workflow_id: ${CIRCLE_WORKFLOW_ID:0:7}
+          event: on_fail
+      - revert-migrations:
+          workflow_id: ${CIRCLE_WORKFLOW_ID:0:7}
+          event: on_fail        
 
 workflows:
   default:
@@ -266,4 +329,6 @@ workflows:
       - run-migrations:
           requires: [configure-infrastructure]
       - deploy-frontend:
+          requires: [run-migrations]
+      - deploy-backend:
           requires: [run-migrations]
