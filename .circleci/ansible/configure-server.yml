@@ -1,6 +1,6 @@
 ---
 - name: "server configuration" 
-  hosts: web
+  hosts: all
   user: ubuntu
   become: true
   become_method: sudo
@@ -33,3 +33,4 @@
 
   roles:
     - configure-server
+    - configure-prometheus-node-exporter
